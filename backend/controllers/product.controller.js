@@ -92,27 +92,84 @@ export const deleteProduct = async (req, res) => {
 };
 
 export const getRecommendedProducts = async (req, res) => {
-	try {
-		const products = await Product.aggregate([
-			{
-				$sample: { size: 4 },
-			},
-			{
-				$project: {
-					_id: 1,
-					name: 1,
-					description: 1,
-					image: 1,
-					price: 1,
-				},
-			},
-		]);
+    try {
+        // Fetch the user's cart
+        const cart = await Product.find({ _id: { $in: req.user.cartItems } });
 
-		res.json(products);
-	} catch (error) {
-		console.log("Error in getRecommendedProducts controller", error.message);
-		res.status(500).json({ message: "Server error", error: error.message });
-	}
+        // If cart is empty, fall back to random products
+        if (!cart || !cart.items.length) {
+            const products = await Product.aggregate([
+                {
+                    $sample: { size: 4 },
+                },
+                {
+                    $project: {
+                        _id: 1,
+                        name: 1,
+                        description: 1,
+                        image: 1,
+                        price: 1,
+                    },
+                },
+            ]);
+            return res.json(products);
+        }
+
+        // Get product IDs and categories from cart
+        const cartProductIds = cart.items.map(item => item.product._id);
+        const cartCategories = [...new Set(cart.items.map(item => item.product.category))];
+
+        // Fetch related products not in cart
+        const products = await Product.aggregate([
+            {
+                $match: {
+                    _id: { $nin: cartProductIds }, // Exclude products in cart
+                    category: { $in: cartCategories }, // Match products in same categories
+                },
+            },
+            {
+                $sample: { size: 4 }, // Randomly select 4 products
+            },
+            {
+                $project: {
+                    _id: 1,
+                    name: 1,
+                    description: 1,
+                    image: 1,
+                    price: 1,
+                },
+            },
+        ]);
+
+        // If no related products found, fall back to random products (excluding cart items)
+        if (!products.length) {
+            const fallbackProducts = await Product.aggregate([
+                {
+                    $match: {
+                        _id: { $nin: cartProductIds },
+                    },
+                },
+                {
+                    $sample: { size: 4 },
+                },
+                {
+                    $project: {
+                        _id: 1,
+                        name: 1,
+                        description: 1,
+                        image: 1,
+                        price: 1,
+                    },
+                },
+            ]);
+            return res.json(fallbackProducts);
+        }
+
+        res.json(products);
+    } catch (error) {
+        console.log("Error in getRecommendedProducts controller", error.message);
+        res.status(500).json({ message: "Server error", error: error.message });
+    }
 };
 
 export const getProductsByCategory = async (req, res) => {
